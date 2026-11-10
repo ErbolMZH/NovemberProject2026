@@ -1,0 +1,99 @@
+// Модель для категории
+type AFCategoryModel struct {
+    Code string `json:"code" db:"code"`
+    Name string `json:"name" db:"name"`
+}
+
+// Запрос в БД
+func GetCategoriesDictionary() ([]AFCategoryModel, error) {
+    var categories []AFCategoryModel
+    query := `select code, name from category_dictionary order by name asc`
+    err := pg.DB().Select(&categories, query)
+    if err != nil {
+        return nil, err
+    }
+    return categories, nil
+}
+
+// Echo Handler
+func GetCategoriesHandler(c echo.Context) error {
+    categories, err := GetCategoriesDictionary()
+    if err != nil {
+        log.Printf("Ошибка при получении категорий: %v", err)
+        return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+            "success": false,
+            "error":   err.Error(),
+        })
+    }
+    return c.JSON(http.StatusOK, map[string]interface{}{
+        "success": true,
+        "data":    categories,
+    })
+}
+
+
+async fetchCategories() {
+    try {
+        const resp = await axios.get('/incidents/categories');
+        this.categories = resp.data.data || [];
+    } catch (error) {
+        console.error("Ошибка при загрузке категорий:", error);
+    }
+},
+
+
+<!-- Выпадающий список категорий из category_dictionary -->
+    <select v-model="selectedCategory" class="inp select-fixed mr10" @change="fetchReport">
+        <option value="">Все категории</option>
+        <option v-for="cat in categories" :key="cat.code" :value="cat.code">
+            {{ cat.name }}
+        </option>
+    </select>
+
+
+
+/* Стили для выпадающего списка категорий в панели поиска */
+.search-panel select.select-fixed {
+    /* Задаем фиксированную и комфортную ширину под длинные названия из справочника */
+    width: 320px; 
+    max-width: 100%;
+    
+    /* Обеспечиваем единую высоту с соседними инпутами и кнопками (.inp) */
+    height: 38px; /* Замените на вашу стандартную высоту инпутов, если она отличается (например, 34px/40px) */
+    padding: 0 12px;
+    
+    /* Визуальное оформление в стиле антифрод-системы */
+    background-color: #ffffff;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    color: #606266;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+    
+    /* Плавный переход при наведении (если поддерживается интерфейсом) */
+    transition: border-color 0.2s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+/* Состояние при наведении мыши */
+.search-panel select.select-fixed:hover {
+    border-color: #c0c4cc;
+}
+
+/* Состояние в фокусе (когда список открыт или выбран) */
+.search-panel select.select-fixed:focus {
+    border-color: #409eff;
+}
+
+/* Стили для выпадающих опций внутри списка */
+.search-panel select.select-fixed option {
+    padding: 8px 12px;
+    color: #606266;
+    background-color: #ffffff;
+}
+
+/* Выделение для пункта "Все категории" или пустой опции, чтобы смотрелось аккуратно */
+.search-panel select.select-fixed option[value=""] {
+    color: #909399;
+    font-style: italic;
+}
