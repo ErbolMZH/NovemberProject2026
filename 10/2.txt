@@ -1,0 +1,29 @@
+async fetchReport() {
+    this.isLoading = true;
+    try {
+        // Формируем параметры вручную, чтобы массив развернулся в ?category=A&category=B
+        const params = new URLSearchParams();
+        params.append('search_type', this.searchType);
+        params.append('search_value', this.searchValue);
+        params.append('c_list', this.c_list);
+        params.append('n_list', this.n_list);
+
+        // До каждую выбранную категорию добавляем отдельно
+        if (this.selectedCategories && this.selectedCategories.length > 0) {
+            this.selectedCategories.forEach(cat => {
+                params.append('category', cat);
+            });
+        }
+
+        const resp = await axios.get('/incidents/personView', { params });
+        
+        this.reports = resp.data.data || [];
+        this.len = resp.data.len || 0;
+        this.m_list = Math.trunc(this.len / this.c_list) + 1;
+    } catch (error) {
+        console.error("Ошибка при загрузке отчёта:", error);
+        alert("Ошибка загрузки отчёта");
+    } finally {
+        this.isLoading = false;
+    }
+}
