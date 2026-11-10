@@ -1,0 +1,28 @@
+<!-- Контейнер фильтра категорий -->
+<div class="custom-dropdown mr10" style="position: relative; display: inline-block;">
+    
+    <!-- Кнопка-селектор -->
+    <div class="inp select-fixed dropdown-toggle" @click="isDropdownOpen = !isDropdownOpen" style="cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none;">
+        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            {{ selectedCategories.length === 0 ? 'Все категории' : 'Выбрано: ' + selectedCategories.length }}
+        </span>
+        <span style="font-size: 10px; margin-left: 5px;">▼</span>
+    </div>
+
+    <!-- 1. ПРОЗРАЧНЫЙ ОВЕРЛЕЙ (Ловит клики вне меню и закрывает его) -->
+    <div v-if="isDropdownOpen" @click="isDropdownOpen = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 999; background: transparent;"></div>
+
+    <!-- 2. Само выпадающее меню (z-index выше, чем у оверлея) -->
+    <div v-if="isDropdownOpen" class="dropdown-menu-custom" style="position: absolute; top: 42px; left: 0; width: 320px; background: #fff; border: 1px solid #dcdfe6; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; max-height: 250px; overflow-y: auto; padding: 6px 0;">
+        
+        <div style="padding: 6px 12px; border-bottom: 1px solid #ebeef5; display: flex; justify-content: space-between; font-size: 12px;">
+            <span @click="selectedCategories = []; fetchReport()" style="color: #409eff; cursor: pointer;">Сбросить</span>
+            <span @click="selectedCategories = categories.map(c => c.code); fetchReport()" style="color: #409eff; cursor: pointer;">Выбрать все</span>
+        </div>
+
+        <label v-for="cat in categories" :key="cat.code" style="display: flex; align-items: center; padding: 8px 12px; cursor: pointer; font-size: 13px; color: #606266;" class="dropdown-item-hover">
+            <input type="checkbox" :value="cat.code" v-model="selectedCategories" @change="fetchReport" style="margin-right: 8px; cursor: pointer;" />
+            <span>{{ cat.name }}</span>
+        </label>
+    </div>
+</div>
