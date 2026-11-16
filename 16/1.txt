@@ -1,0 +1,10 @@
+SELECT 
+    id, 
+    (elem::jsonb)->>'base' AS base_name,
+    (elem::jsonb)->>'category' AS category,
+    (elem::jsonb)->>'createdBy' AS created_by,
+    ((elem::jsonb)->>'isDeleted')::boolean AS is_deleted,
+    (elem::jsonb)->>'createdDate' AS created_date
+FROM subject,
+LATERAL unnest(categories) AS elem
+WHERE id = 'ВАШ_ID'; -- замените на нужный ID (например, '12345' или число 123 в зависимости от типа данных id)
