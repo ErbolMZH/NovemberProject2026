@@ -1,0 +1,72 @@
+CREATE OR REPLACE FUNCTION log_subject_diff()
+RETURNS TRIGGER AS $$
+DECLARE
+    old_json JSONB;
+    new_json JSONB;
+    diff_old JSONB := '{}'::JSONB;
+    diff_new JSONB := '{}'::JSONB;
+    k TEXT;
+    v_old JSONB;
+    v_new JSONB;
+    val_text TEXT;
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+        VALUES (NEW.id, 'I', NULL, jsonb_strip_nulls(to_jsonb(NEW)));
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'UPDATE') THEN
+        old_json := to_jsonb(OLD);
+        new_json := to_jsonb(NEW);
+
+        FOR k IN SELECT jsonb_object_keys(new_json)
+        LOOP
+            IF k = 'updated_at' THEN 
+                CONTINUE; 
+            END IF;
+
+            -- Пытаемся корректно вытащить старое значение (если это строка с JSON, превращаем в jsonb)
+            BEGIN
+                val_text := old_json ->> k;
+                IF val_text IS NOT NULL AND (val_text LIKE '{*`' OR val_text LIKE '[*`') THEN
+                    v_old := val_text::jsonb;
+                ELSE
+                    v_old := old_json -> k;
+                END IF;
+            EXCEPTION WHEN others THEN
+                v_old := old_json -> k;
+            END;
+
+            -- Пытаемся корректно вытащить новое значение
+            BEGIN
+                val_text := new_json ->> k;
+                IF val_text IS NOT NULL AND (val_text LIKE '{*' OR val_text LIKE '[*') THEN
+                    v_new := val_text::jsonb;
+                ELSE
+                    v_new := new_json -> k;
+                END IF;
+            EXCEPTION WHEN others THEN
+                v_new := new_json -> k;
+            END;
+
+            IF v_old IS DISTINCT FROM v_new THEN
+                diff_old := diff_old || jsonb_build_object(k, v_old);
+                diff_new := diff_new || jsonb_build_object(k, v_new);
+            END IF;
+        END LOOP;
+
+        IF diff_new <> '{}'::JSONB THEN
+            INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+            VALUES (NEW.id, 'U', diff_old, diff_new);
+        END IF;
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'DELETE') THEN
+        INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+        VALUES (OLD.id, 'D', jsonb_strip_nulls(to_jsonb(OLD)), NULL);
+        RETURN OLD;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
