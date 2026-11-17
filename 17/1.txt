@@ -1,0 +1,74 @@
+DROP TABLE IF EXISTS subject_history;
+
+CREATE TABLE subject_history (
+    id BIGSERIAL PRIMARY KEY,
+    subject_id BIGINT NOT NULL,
+    op CHAR(1) NOT NULL,          -- 'I', 'U', 'D'
+    old_diff JSONB,               -- БЫЛО (только измененные поля)
+    new_diff JSONB,               -- СТАЛО (только измененные поля)
+    changed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_subject_history_sub_time ON subject_history (subject_id, changed_at DESC);
+
+CREATE OR REPLACE FUNCTION log_subject_diff()
+RETURNS TRIGGER AS $$
+DECLARE
+    old_json JSONB;
+    new_json JSONB;
+    diff_old JSONB := '{}'::JSONB;
+    diff_new JSONB := '{}'::JSONB;
+    k TEXT;
+    v_old JSONB;
+    v_new JSONB;
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+        VALUES (NEW.id, 'I', NULL, jsonb_strip_nulls(to_jsonb(NEW)));
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'UPDATE') THEN
+        old_json := to_jsonb(OLD);
+        new_json := to_jsonb(NEW);
+
+        -- Сравниваем каждое поле
+        FOR k IN SELECT jsonb_object_keys(new_json)
+        LOOP
+            -- Игнорируем техническое поле времени обновления, если оно есть
+            IF k = 'updated_at' THEN 
+                CONTINUE; 
+            END IF;
+
+            v_old := old_json -> k;
+            v_new := new_json -> k;
+
+            -- Если значение изменилось, пишем в дельту
+            IF v_old IS DISTINCT FROM v_new THEN
+                diff_old := diff_old || jsonb_build_object(k, v_old);
+                diff_new := diff_new || jsonb_build_object(k, v_new);
+            END IF;
+        END LOOP;
+
+        -- Сохраняем только если реально были изменения в полях
+        IF diff_new <> '{}'::JSONB THEN
+            INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+            VALUES (NEW.id, 'U', diff_old, diff_new);
+        END IF;
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'DELETE') THEN
+        INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+        VALUES (OLD.id, 'D', jsonb_strip_nulls(to_jsonb(OLD)), NULL);
+        RETURN OLD;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+
+DROP TRIGGER IF EXISTS trg_subject_diff_audit ON subject;
+
+CREATE TRIGGER trg_subject_diff_audit
+AFTER INSERT OR UPDATE OR DELETE ON subject
+FOR EACH ROW EXECUTE FUNCTION log_subject_diff();
