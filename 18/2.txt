@@ -1,0 +1,53 @@
+FOR k IN SELECT jsonb_object_keys(new_json)
+LOOP
+    IF k = 'updated_at' THEN
+        CONTINUE;
+    END IF;
+
+    -- OLD
+    BEGIN
+        val_text := old_json ->> k;
+
+        IF k = 'categories' THEN
+            IF old_json -> k IS NULL OR jsonb_typeof(old_json -> k) = 'null' THEN
+                v_old := NULL;
+            ELSIF jsonb_typeof(old_json -> k) = 'array' THEN
+                v_old := old_json -> k;
+            ELSE
+                v_old := to_jsonb(val_text::text[]);
+            END IF;
+        ELSIF val_text IS NOT NULL AND (val_text LIKE '{%' OR val_text LIKE '[%') THEN
+            v_old := val_text::jsonb;
+        ELSE
+            v_old := old_json -> k;
+        END IF;
+    EXCEPTION WHEN others THEN
+        v_old := old_json -> k;
+    END;
+
+    -- NEW
+    BEGIN
+        val_text := new_json ->> k;
+
+        IF k = 'categories' THEN
+            IF new_json -> k IS NULL OR jsonb_typeof(new_json -> k) = 'null' THEN
+                v_new := NULL;
+            ELSIF jsonb_typeof(new_json -> k) = 'array' THEN
+                v_new := new_json -> k;
+            ELSE
+                v_new := to_jsonb(val_text::text[]);
+            END IF;
+        ELSIF val_text IS NOT NULL AND (val_text LIKE '{%' OR val_text LIKE '[%') THEN
+            v_new := val_text::jsonb;
+        ELSE
+            v_new := new_json -> k;
+        END IF;
+    EXCEPTION WHEN others THEN
+        v_new := new_json -> k;
+    END;
+
+    IF v_old IS DISTINCT FROM v_new THEN
+        diff_old := diff_old || jsonb_build_object(k, v_old);
+        diff_new := diff_new || jsonb_build_object(k, v_new);
+    END IF;
+END LOOP;
