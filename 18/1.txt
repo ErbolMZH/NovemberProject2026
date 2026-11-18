@@ -1,0 +1,22 @@
+
+IF k = 'categories' THEN
+    IF old_json -> k IS NULL OR jsonb_typeof(old_json -> k) = 'null' THEN
+        v_old := NULL;
+    ELSIF jsonb_typeof(old_json -> k) = 'array' THEN
+        v_old := old_json -> k;              -- колонка text[] уже стала JSON-массивом
+    ELSE
+        v_old := to_jsonb(val_text::text[]); -- текст '{a,b}' -> ["a","b"]
+    END IF;
+ELSIF val_text IS NOT NULL AND (val_text LIKE '{%' OR val_text LIKE '[%') THEN
+
+
+
+IF k = 'categories' THEN
+    IF new_json -> k IS NULL OR jsonb_typeof(new_json -> k) = 'null' THEN
+        v_new := NULL;
+    ELSIF jsonb_typeof(new_json -> k) = 'array' THEN
+        v_new := new_json -> k;
+    ELSE
+        v_new := to_jsonb(val_text::text[]);
+    END IF;
+ELSIF val_text IS NOT NULL AND (val_text LIKE '{%' OR val_text LIKE '[%') THEN
