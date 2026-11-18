@@ -1,0 +1,128 @@
+CREATE OR REPLACE FUNCTION safe_parse_json(t TEXT)
+RETURNS JSONB AS $$
+BEGIN
+    RETURN t::JSONB;
+EXCEPTION WHEN others THEN
+    RETURN to_jsonb(t);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION normalize_categories(val JSONB)
+RETURNS JSONB AS $$
+BEGIN
+    IF val IS NULL OR jsonb_typeof(val) = 'null' THEN
+        RETURN NULL;
+    END IF;
+
+    IF jsonb_typeof(val) = 'string' THEN
+        BEGIN
+            val := to_jsonb((val #>> '{}')::TEXT[]);
+        EXCEPTION WHEN others THEN
+            RETURN val;
+        END;
+    END IF;
+
+    IF jsonb_typeof(val) <> 'array' THEN
+        RETURN val;
+    END IF;
+
+    RETURN COALESCE(
+        (SELECT jsonb_agg(
+                    CASE WHEN jsonb_typeof(e) = 'string'
+                         THEN safe_parse_json(e #>> '{}')
+                         ELSE e
+                    END
+                    ORDER BY ord)
+         FROM jsonb_array_elements(val) WITH ORDINALITY AS t(e, ord)),
+        '[]'::JSONB
+    );
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+DECLARE
+    old_json JSONB;
+    new_json JSONB;
+    diff_old JSONB := '{}'::JSONB;
+    diff_new JSONB := '{}'::JSONB;
+    k TEXT;
+    v_old JSONB;
+    v_new JSONB;
+    val_text TEXT;
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        new_json := to_jsonb(NEW);
+        IF new_json ? 'categories' THEN
+            new_json := jsonb_set(new_json, '{categories}',
+                COALESCE(normalize_categories(new_json -> 'categories'), 'null'::jsonb));
+        END IF;
+
+        INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+        VALUES (NEW.id, 'I', NULL, jsonb_strip_nulls(new_json));
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'UPDATE') THEN
+        old_json := to_jsonb(OLD);
+        new_json := to_jsonb(NEW);
+
+        FOR k IN SELECT jsonb_object_keys(new_json)
+        LOOP
+            IF k = 'updated_at' THEN
+                CONTINUE;
+            END IF;
+
+            -- OLD
+            BEGIN
+                val_text := old_json ->> k;
+                IF k = 'categories' THEN
+                    v_old := normalize_categories(old_json -> k);
+                ELSIF val_text IS NOT NULL AND (val_text LIKE '{%' OR val_text LIKE '[%') THEN
+                    v_old := val_text::jsonb;
+                ELSE
+                    v_old := old_json -> k;
+                END IF;
+            EXCEPTION WHEN others THEN
+                v_old := old_json -> k;
+            END;
+
+            -- NEW
+            BEGIN
+                val_text := new_json ->> k;
+                IF k = 'categories' THEN
+                    v_new := normalize_categories(new_json -> k);
+                ELSIF val_text IS NOT NULL AND (val_text LIKE '{%' OR val_text LIKE '[%') THEN
+                    v_new := val_text::jsonb;
+                ELSE
+                    v_new := new_json -> k;
+                END IF;
+            EXCEPTION WHEN others THEN
+                v_new := new_json -> k;
+            END;
+
+            IF v_old IS DISTINCT FROM v_new THEN
+                diff_old := diff_old || jsonb_build_object(k, v_old);
+                diff_new := diff_new || jsonb_build_object(k, v_new);
+            END IF;
+        END LOOP;
+
+        IF diff_new <> '{}'::JSONB THEN
+            INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+            VALUES (NEW.id, 'U', diff_old, diff_new);
+        END IF;
+        RETURN NEW;
+
+    ELSIF (TG_OP = 'DELETE') THEN
+        old_json := to_jsonb(OLD);
+        IF old_json ? 'categories' THEN
+            old_json := jsonb_set(old_json, '{categories}',
+                COALESCE(normalize_categories(old_json -> 'categories'), 'null'::jsonb));
+        END IF;
+
+        INSERT INTO subject_history (subject_id, op, old_diff, new_diff)
+        VALUES (OLD.id, 'D', jsonb_strip_nulls(old_json), NULL);
+        RETURN OLD;
+    END IF;
+
+    RETURN NULL;
+END;
+
+
+
