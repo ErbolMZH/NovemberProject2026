@@ -1,0 +1,29 @@
+WITH target AS (
+    SELECT
+        id,
+        subject_id,
+        op,
+        table_name,
+        record_id,
+        changed_at,
+        COALESCE(old_diff, '{}'::jsonb) AS old_diff,
+        COALESCE(new_diff, '{}'::jsonb) AS new_diff
+    FROM subject_history
+    WHERE id = :history_id
+),
+keys AS (
+    SELECT DISTINCT jsonb_object_keys(old_diff) AS field_key FROM target
+    UNION
+    SELECT DISTINCT jsonb_object_keys(new_diff) AS field_key FROM target
+)
+SELECT
+    t.id AS history_id,
+    t.op,
+    t.changed_at,
+    k.field_key,
+    t.old_diff -> k.field_key AS old_value,
+    t.new_diff -> k.field_key AS new_value,
+    (t.old_diff -> k.field_key IS DISTINCT FROM t.new_diff -> k.field_key) AS is_changed
+FROM target t
+CROSS JOIN keys k
+ORDER BY k.field_key;
