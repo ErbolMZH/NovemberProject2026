@@ -1,0 +1,66 @@
+WITH per_row AS (
+    SELECT
+        sh.id AS history_id,
+        sh.subject_id,
+        sh.changed_at,
+        sh.table_name,
+        sh.record_id,
+        sh.op,
+        COALESCE(sh.old_diff, '{}'::jsonb) AS old_d,
+        COALESCE(sh.new_diff, '{}'::jsonb) AS new_d
+    FROM subject_history sh
+    WHERE sh.subject_id = :subject_id
+),
+row_fields AS (
+    SELECT
+        r.history_id,
+        r.subject_id,
+        r.changed_at,
+        r.table_name,
+        r.record_id,
+        r.op,
+        jsonb_agg(
+            jsonb_build_object(
+                'field', k.key_name,
+                'was', r.old_d -> k.key_name,
+                'became', r.new_d -> k.key_name
+            ) ORDER BY k.key_name
+        ) AS fields_diff
+    FROM per_row r
+    CROSS JOIN LATERAL (
+        SELECT DISTINCT key_name
+        FROM (
+            SELECT jsonb_object_keys(r.old_d) AS key_name
+            UNION
+            SELECT jsonb_object_keys(r.new_d) AS key_name
+        ) keys
+    ) k
+    GROUP BY
+        r.history_id,
+        r.subject_id,
+        r.changed_at,
+        r.table_name,
+        r.record_id,
+        r.op
+)
+SELECT
+    subject_id,
+    changed_at,
+    table_name,
+    COUNT(*) AS records_count,
+    jsonb_agg(
+        jsonb_build_object(
+            'history_id', history_id,
+            'record_id', record_id,
+            'op', op,
+            'changes', fields_diff
+        ) ORDER BY history_id
+    ) AS diff_batch
+FROM row_fields
+GROUP BY
+    subject_id,
+    changed_at,
+    table_name
+ORDER BY
+    changed_at DESC,
+    table_name;
