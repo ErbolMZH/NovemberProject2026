@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS subject_history_log (
+    id         BIGSERIAL PRIMARY KEY,
+    dt         TIMESTAMPTZ DEFAULT now(),
+    subject_id TEXT,
+    tg_op      TEXT,
+    step       TEXT,
+    sqlstate   TEXT,
+    message    TEXT,
+    detail     TEXT,
+    context    TEXT
+);
