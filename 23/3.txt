@@ -1,0 +1,37 @@
+WITH params AS MATERIALIZED (
+    SELECT
+        '2026-01-01 00:00:00+00'::timestamptz AS d_from,
+        '2026-02-01 00:00:00+00'::timestamptz AS d_to
+),
+parsed AS (
+    SELECT
+        CASE WHEN x.is_json THEN x.j->>'category' ELSE btrim(x.elem) END AS category,
+        CASE WHEN x.is_json THEN COALESCE((x.j->>'isDeleted')::boolean, false) ELSE false END AS is_deleted,
+        CASE WHEN x.is_json THEN NULLIF(x.j->>'createdDate', '')::timestamptz END AS created_dt,
+        CASE WHEN x.is_json THEN NULLIF(x.j->>'deletedDate', '')::timestamptz END AS deleted_dt
+    FROM subject s
+    CROSS JOIN LATERAL unnest(s.categories) AS u(elem)
+    CROSS JOIN LATERAL (
+        SELECT
+            u.elem,
+            left(btrim(u.elem), 1) = '{' AS is_json,
+            CASE WHEN left(btrim(u.elem), 1) = '{' THEN u.elem::jsonb END AS j
+    ) x
+    WHERE u.elem IS NOT NULL
+      AND btrim(u.elem) <> ''
+)
+SELECT
+    p.category,
+    COUNT(*) FILTER (WHERE p.created_dt < pr.d_from
+                       AND (p.deleted_dt IS NULL OR p.deleted_dt >= pr.d_from)) AS na_nachalo_perioda,
+    COUNT(*) FILTER (WHERE p.created_dt >= pr.d_from AND p.created_dt < pr.d_to) AS postupilo_za_period,
+    COUNT(*) FILTER (WHERE p.deleted_dt >= pr.d_from AND p.deleted_dt < pr.d_to) AS udalena_za_period,
+    COUNT(*) FILTER (WHERE p.created_dt < pr.d_to
+                       AND (p.deleted_dt IS NULL OR p.deleted_dt >= pr.d_to)) AS na_konec_perioda,
+    COUNT(*) FILTER (WHERE NOT p.is_deleted AND p.deleted_dt IS NULL) AS seychas
+FROM parsed p
+CROSS JOIN params pr
+WHERE p.category IS NOT NULL AND p.category <> ''
+GROUP BY p.category
+ORDER BY p.category;
+
