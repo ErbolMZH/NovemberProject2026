@@ -1,0 +1,72 @@
+SELECT
+    s.id,
+    s."subjectType", -- например, 'PERSON' / 'LEGAL' (проверьте точные значения в вашей БД)
+    (elem::jsonb)->>'category' AS category,
+    ((elem::jsonb)->>'isDeleted')::boolean AS is_deleted,
+    ((elem::jsonb)->>'createdDate')::timestamptz AS created_dt,
+    ((elem::jsonb)->>'deletedDate')::timestamptz AS deleted_dt,
+    ((elem::jsonb)->>'updatedDate')::timestamptz AS updated_dt
+FROM subject s
+CROSS JOIN LATERAL unnest(s.categories) AS elem
+WHERE s.categories IS NOT NULL;
+```[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
+
+---
+
+### 2. Сводный запрос по категориям и метрикам отчёта
+
+Подставьте границы периода (`:date_from` — начало периода, `:date_to` — конец периода) и проверьте точные значения `s."subjectType"` для **ФЛ** и **ЮЛ**[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span):
+
+```sql
+WITH params AS (
+    SELECT
+        '2026-01-01 00:00:00+00'::timestamptz AS d_from,
+        '2026-02-01 00:00:00+00'::timestamptz AS d_to
+),
+parsed AS (
+    SELECT
+        s.id,
+        s."subjectType" AS subj_type,
+        (elem::jsonb)->>'category' AS category,
+        COALESCE(((elem::jsonb)->>'isDeleted')::boolean, false) AS is_deleted,
+        ((elem::jsonb)->>'createdDate')::timestamptz AS created_dt,
+        ((elem::jsonb)->>'deletedDate')::timestamptz AS deleted_dt
+    FROM subject s
+    CROSS JOIN LATERAL unnest(s.categories) AS elem
+    WHERE elem IS NOT NULL
+)
+SELECT
+    p.category,
+    -- Пример для одного типа субъекта (продублируйте/разнесите по ФЛ и ЮЛ)
+    COUNT(*) FILTER (
+        WHERE p.created_dt < pr.d_from
+          AND (p.deleted_dt IS NULL OR p.deleted_dt >= pr.d_from)
+    ) AS na_nachalo_perioda,
+    COUNT(*) FILTER (
+        WHERE p.created_dt >= pr.d_from
+          AND p.created_dt < pr.d_to
+    ) AS postupilo_za_period,
+    COUNT(*) FILTER (
+        WHERE p.deleted_dt >= pr.d_from
+          AND p.deleted_dt < pr.d_to
+    ) AS udalena_za_period,
+    COUNT(*) FILTER (
+        WHERE p.created_dt < pr.d_to
+          AND (p.deleted_dt IS NULL OR p.deleted_dt >= pr.d_to)
+    ) AS na_konec_perioda,
+    COUNT(*) FILTER (
+        WHERE NOT p.is_deleted
+          AND p.deleted_dt IS NULL
+    ) AS seychas
+FROM parsed p
+CROSS JOIN params pr
+GROUP BY p.category
+ORDER BY p.category;
+```[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span)[span_10](start_span)[span_10](end_span)
+
+---
+
+### 3. Что важно уточнить перед финальным запросом
+
+* **Колонка «Сменили категорию»:** в JSON на фото видны `createdDate`, `deletedDate`, `updatedDate` и `isDeleted`[span_11](start_span)[span_11](end_span), но отдельного поля «предыдущая категория» нет. Уточните, как в вашей системе фиксируется смена категории (например, по `updatedDate` при изменении записи или по появлению новой/удалению старой категории).
+* **ФЛ и ЮЛ и границы дат:** подскажите точные значения `subjectType` (или признак ФЛ/ЮЛ в `subject`)[span_12](start_span)[span_12](end_span)[span_13](start_span)[span_13](end_span) и включены ли границы `d_from` / `d_to` (`<=` или `<`), чтобы собрать готовый SQL под все колонки таблицы из Excel[span_14](start_span)[span_14](end_span).
