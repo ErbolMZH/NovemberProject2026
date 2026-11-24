@@ -1,0 +1,44 @@
+import (
+	"fmt"
+	"mime"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+)
+
+func detectFileContentType(fileName string, data []byte, dbType string) string {
+	// 1. Если в БД уже лежит валидный MIME-тип (и не пустой / не generic text/plain для архивов)
+	cleanDB := strings.TrimSpace(dbType)
+	if cleanDB != "" && cleanDB != "application/octet-stream" {
+		return cleanDB
+	}
+
+	// 2. Пробуем определить автоматически по расширению файла (.7z, .pdf, .zip, .docx и т.д.)
+	if ext := strings.ToLower(filepath.Ext(fileName)); ext != "" {
+		if ext == ".7z" {
+			return "application/x-7z-compressed"
+		}
+		if mimeType := mime.TypeByExtension(ext); mimeType != "" {
+			return mimeType
+		}
+	}
+
+	// 3. Fallback по первым байтам содержимого файла
+	if len(data) > 0 {
+		return http.DetectContentType(data)
+	}
+
+	return "application/octet-stream"
+}
+
+file := filist[0]
+contentType := detectFileContentType(file.F_name, file.F_myfile, file.F_filetype)
+escapedName := url.PathEscape(file.F_name)
+
+c.Response().Header().Set("Content-Type", contentType)
+c.Response().Header().Set(
+	"Content-Disposition",
+	fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, file.F_name, escapedName),
+)
+return c.Blob(200, contentType, file.F_myfile)
