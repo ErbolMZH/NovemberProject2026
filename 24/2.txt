@@ -1,0 +1,58 @@
+WITH params AS (
+  SELECT '2025-11-01'::timestamptz AS d_start,
+         '2025-12-01'::timestamptz AS d_end
+),
+cats(n, category) AS (
+  VALUES (1,'WHITE_LIST'),(2,'POTENTIAL_VICTIM'),(3,'GREY'),
+         (4,'CASINO_CEPI_GREY'),(5,'CASINO_GREY'),(6,'DRUG_GREY'),
+         (7,'PYRAMID_GREY'),(8,'WITNESS'),(9,'VICTIM'),(10,'DROPPER'),
+         (11,'PYRAMID_CEPI_GREY'),(12,'BLACK'),(13,'DRUG_CEPI_GREY')
+),
+items AS (
+  SELECT s.id AS subject_id,
+         s.subject_type,                       -- ФЛ/ЮЛ, поправьте под своё поле
+         e->>'category'                        AS category,
+         (e->>'createdDate')::timestamptz      AS created,
+         (e->>'deletedDate')::timestamptz      AS deleted,
+         COALESCE((e->>'isDeleted')::boolean, false) AS is_deleted
+  FROM subject s
+  CROSS JOIN LATERAL unnest(s.categories) AS u(raw)
+  CROSS JOIN LATERAL (SELECT u.raw::jsonb AS e) j
+),
+flagged AS (
+  SELECT i.*,
+    (i.created < p.d_start
+       AND (i.deleted IS NULL OR i.deleted >= p.d_start)) AS on_start,
+    (i.created >= p.d_start AND i.created < p.d_end)      AS arrived,
+    (i.deleted >= p.d_start AND i.deleted < p.d_end)      AS del_in,
+    EXISTS (                                   -- в периоде появилась другая категория
+      SELECT 1 FROM items o
+      WHERE o.subject_id = i.subject_id
+        AND o.category <> i.category
+        AND o.created >= p.d_start AND o.created < p.d_end
+    ) AS has_new,
+    (i.created < p.d_end
+       AND (i.deleted IS NULL OR i.deleted >= p.d_end))   AS on_end,
+    NOT i.is_deleted                                      AS now_
+  FROM items i CROSS JOIN params p
+)
+SELECT
+  c.n AS "№", c.category,
+  -- ФЛ
+  count(*) FILTER (WHERE f.subject_type='FL' AND f.on_start)                 AS fl_start,
+  count(*) FILTER (WHERE f.subject_type='FL' AND f.arrived)                  AS fl_arrived,
+  count(*) FILTER (WHERE f.subject_type='FL' AND f.del_in AND f.has_new)     AS fl_changed,
+  count(*) FILTER (WHERE f.subject_type='FL' AND f.del_in AND NOT f.has_new) AS fl_removed,
+  count(*) FILTER (WHERE f.subject_type='FL' AND f.on_end)                   AS fl_end,
+  count(*) FILTER (WHERE f.subject_type='FL' AND f.now_)                     AS fl_now,
+  -- ЮЛ
+  count(*) FILTER (WHERE f.subject_type='UL' AND f.on_start)                 AS ul_start,
+  count(*) FILTER (WHERE f.subject_type='UL' AND f.arrived)                  AS ul_arrived,
+  count(*) FILTER (WHERE f.subject_type='UL' AND f.del_in AND f.has_new)     AS ul_changed,
+  count(*) FILTER (WHERE f.subject_type='UL' AND f.del_in AND NOT f.has_new) AS ul_removed,
+  count(*) FILTER (WHERE f.subject_type='UL' AND f.on_end)                   AS ul_end,
+  count(*) FILTER (WHERE f.subject_type='UL' AND f.now_)                     AS ul_now
+FROM cats c
+LEFT JOIN flagged f ON f.category = c.category
+GROUP BY c.n, c.category
+ORDER BY c.n;
