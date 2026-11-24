@@ -1,0 +1,146 @@
+CREATE OR REPLACE FUNCTION parse_cat_item(raw text) RETURNS jsonb
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+  IF ltrim(raw) LIKE '{%'  THEN RETURN raw::jsonb; END IF;
+  IF ltrim(raw) LIKE '"{%' THEN RETURN (raw::jsonb #>> '{}')::jsonb; END IF;
+  RETURN NULL;                       -- «голая» строка вроде VICTIM
+EXCEPTION WHEN others THEN
+  RETURN NULL;
+END $$;
+
+
+CREATE TABLE IF NOT EXISTS subject_category_item (
+  subject_id   bigint      NOT NULL,   -- тип как у subject.id
+  subject_type text,
+  category     text        NOT NULL,
+  created      timestamptz,
+  deleted      timestamptz,
+  is_deleted   boolean     NOT NULL DEFAULT false
+);
+CREATE INDEX ON subject_category_item (subject_id);
+CREATE INDEX ON subject_category_item (category);
+CREATE INDEX ON subject_category_item (created);
+CREATE INDEX ON subject_category_item (deleted);
+
+
+
+CREATE OR REPLACE FUNCTION trg_subject_cat_sync() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM subject_category_item WHERE subject_id = OLD.id;
+    RETURN OLD;
+  END IF;
+
+  DELETE FROM subject_category_item WHERE subject_id = NEW.id;
+
+  INSERT INTO subject_category_item
+         (subject_id, subject_type, category, created, deleted, is_deleted)
+  SELECT NEW.id,
+         NEW.subject_type,                      -- поправьте под своё поле
+         COALESCE(p.j->>'category', trim(u.raw)),
+         COALESCE((p.j->>'createdDate')::timestamptz, NEW.created_date),
+         (p.j->>'deletedDate')::timestamptz,
+         COALESCE((p.j->>'isDeleted')::boolean, false)
+  FROM unnest(NEW.categories) AS u(raw)
+  CROSS JOIN LATERAL (SELECT parse_cat_item(u.raw) AS j) p;
+
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS subject_cat_sync ON subject;
+CREATE TRIGGER subject_cat_sync
+AFTER INSERT OR DELETE OR UPDATE OF categories, subject_type ON subject
+FOR EACH ROW EXECUTE FUNCTION trg_subject_cat_sync();
+
+
+
+CREATE OR REPLACE FUNCTION trg_subject_cat_sync() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM subject_category_item WHERE subject_id = OLD.id;
+    RETURN OLD;
+  END IF;
+
+  DELETE FROM subject_category_item WHERE subject_id = NEW.id;
+
+  INSERT INTO subject_category_item
+         (subject_id, subject_type, category, created, deleted, is_deleted)
+  SELECT NEW.id,
+         NEW.subject_type,                      -- поправьте под своё поле
+         COALESCE(p.j->>'category', trim(u.raw)),
+         COALESCE((p.j->>'createdDate')::timestamptz, NEW.created_date),
+         (p.j->>'deletedDate')::timestamptz,
+         COALESCE((p.j->>'isDeleted')::boolean, false)
+  FROM unnest(NEW.categories) AS u(raw)
+  CROSS JOIN LATERAL (SELECT parse_cat_item(u.raw) AS j) p;
+
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS subject_cat_sync ON subject;
+CREATE TRIGGER subject_cat_sync
+AFTER INSERT OR DELETE OR UPDATE OF categories, subject_type ON subject
+FOR EACH ROW EXECUTE FUNCTION trg_subject_cat_sync();
+
+TRUNCATE subject_category_item;
+
+INSERT INTO subject_category_item
+SELECT s.id, s.subject_type,
+       COALESCE(p.j->>'category', trim(u.raw)),
+       COALESCE((p.j->>'createdDate')::timestamptz, s.created_date),
+       (p.j->>'deletedDate')::timestamptz,
+       COALESCE((p.j->>'isDeleted')::boolean, false)
+FROM subject s
+CROSS JOIN LATERAL unnest(s.categories) AS u(raw)
+CROSS JOIN LATERAL (SELECT parse_cat_item(u.raw) AS j) p;
+
+ANALYZE subject_category_item;
+
+
+CREATE OR REPLACE FUNCTION report_categories(d_start timestamptz, d_end timestamptz)
+RETURNS TABLE (n int, category text,
+  fl_start bigint, fl_arrived bigint, fl_changed bigint, fl_removed bigint, fl_end bigint, fl_now bigint,
+  ul_start bigint, ul_arrived bigint, ul_changed bigint, ul_removed bigint, ul_end bigint, ul_now bigint)
+LANGUAGE sql STABLE AS $$
+WITH cats(n, category) AS (
+  VALUES (1,'WHITE_LIST'),(2,'POTENTIAL_VICTIM'),(3,'GREY'),
+         (4,'CASINO_CEPI_GREY'),(5,'CASINO_GREY'),(6,'DRUG_GREY'),
+         (7,'PYRAMID_GREY'),(8,'WITNESS'),(9,'VICTIM'),(10,'DROPPER'),
+         (11,'PYRAMID_CEPI_GREY'),(12,'BLACK'),(13,'DRUG_CEPI_GREY')
+),
+base AS (
+  SELECT * FROM subject_category_item WHERE created < d_end
+),
+new_ps AS (
+  SELECT subject_id, array_agg(DISTINCT category) AS new_cats
+  FROM base WHERE created >= d_start GROUP BY subject_id
+),
+f AS (
+  SELECT b.subject_type, b.category, b.subject_id,
+    (b.created < d_start AND (b.deleted IS NULL OR b.deleted >= d_start)) AS on_start,
+    (b.created >= d_start)                         AS arrived,
+    (b.deleted >= d_start AND b.deleted < d_end)   AS del_in,
+    COALESCE(cardinality(array_remove(n.new_cats, b.category)) > 0, false) AS has_new,
+    (b.deleted IS NULL OR b.deleted >= d_end)      AS on_end,
+    NOT b.is_deleted                               AS now_
+  FROM base b LEFT JOIN new_ps n USING (subject_id)
+)
+SELECT c.n, c.category,
+  count(f.subject_id) FILTER (WHERE f.subject_type='FL' AND f.on_start),
+  count(f.subject_id) FILTER (WHERE f.subject_type='FL' AND f.arrived),
+  count(f.subject_id) FILTER (WHERE f.subject_type='FL' AND f.del_in AND f.has_new),
+  count(f.subject_id) FILTER (WHERE f.subject_type='FL' AND f.del_in AND NOT f.has_new),
+  count(f.subject_id) FILTER (WHERE f.subject_type='FL' AND f.on_end),
+  count(f.subject_id) FILTER (WHERE f.subject_type='FL' AND f.now_),
+  count(f.subject_id) FILTER (WHERE f.subject_type='UL' AND f.on_start),
+  count(f.subject_id) FILTER (WHERE f.subject_type='UL' AND f.arrived),
+  count(f.subject_id) FILTER (WHERE f.subject_type='UL' AND f.del_in AND f.has_new),
+  count(f.subject_id) FILTER (WHERE f.subject_type='UL' AND f.del_in AND NOT f.has_new),
+  count(f.subject_id) FILTER (WHERE f.subject_type='UL' AND f.on_end),
+  count(f.subject_id) FILTER (WHERE f.subject_type='UL' AND f.now_)
+FROM cats c LEFT JOIN f ON f.category = c.category
+GROUP BY c.n, c.category
+ORDER BY c.n;
+$$;
