@@ -1,0 +1,15 @@
+SELECT 
+    s.id AS subject_id,
+    s.subject_type,
+    s.categories AS raw_categories,
+    sci.category,
+    sci.created,
+    sci.deleted,
+    sci.is_deleted,
+    (sci.created < '2026-11-01' AND (sci.deleted IS NULL OR sci.deleted >= '2026-11-01')) AS is_start,
+    (sci.created >= '2026-11-01' AND sci.created < '2026-12-01') AS is_arrived,
+    (sci.deleted >= '2026-11-01' AND sci.deleted < '2026-12-01') AS is_deleted_in_period,
+    (sci.created < '2026-12-01' AND (sci.deleted IS NULL OR sci.deleted >= '2026-12-01')) AS is_end
+FROM subject s
+LEFT JOIN subject_category_item sci ON sci.subject_id = s.id
+WHERE sci.category = 'GREY';
