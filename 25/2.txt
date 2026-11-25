@@ -1,0 +1,15 @@
+SELECT
+  s.id AS subject_id,
+  s.subject_type,
+  sci.category,
+  sci.created,
+  sci.deleted,
+  sci.is_deleted,
+  (sci.created < :d_start AND (sci.deleted IS NULL OR sci.deleted >= :d_start)) AS on_start,
+  (sci.created >= :d_start AND sci.created < :d_end) AS arrived,
+  (sci.deleted >= :d_start AND sci.deleted < :d_end) AS del_in,
+  (sci.created < :d_end AND (sci.deleted IS NULL OR sci.deleted >= :d_end)) AS on_end,
+  NOT sci.is_deleted AS now_
+FROM subject s
+JOIN subject_category_item sci ON sci.subject_id = s.id
+WHERE s.id = '<ваш_uuid>';
