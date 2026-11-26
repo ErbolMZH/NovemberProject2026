@@ -1,0 +1,32 @@
+WITH params AS (
+  SELECT
+    '2026-08-27 18:53:00+05'::timestamptz AS d_start,
+    '2026-08-27 18:54:00+05'::timestamptz AS d_end
+),
+base AS (
+  SELECT b.*
+  FROM subject_category_item b, params p
+  WHERE b.subject_id = '371d20e1-5459-49b5-9051-ae5218ad67a5'
+    AND b.created < p.d_end
+),
+new_ps AS (
+  SELECT b.subject_id, array_agg(DISTINCT b.category) AS new_cats
+  FROM base b, params p
+  WHERE b.created >= p.d_start
+  GROUP BY b.subject_id
+)
+SELECT
+  b.category,
+  b.created,
+  b.deleted,
+  b.is_deleted,
+  (b.created < p.d_start AND (b.deleted IS NULL OR b.deleted >= p.d_start)) AS on_start,
+  (b.created >= p.d_start) AS arrived,
+  (b.deleted >= p.d_start AND b.deleted < p.d_end) AS del_in,
+  n.new_cats,
+  COALESCE(cardinality(array_remove(n.new_cats, b.category)) > 0, false) AS has_new,
+  (b.deleted IS NULL OR b.deleted >= p.d_end) AS on_end,
+  NOT b.is_deleted AS now_
+FROM base b
+CROSS JOIN params p
+LEFT JOIN new_ps n USING (subject_id);
