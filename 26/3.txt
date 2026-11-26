@@ -1,0 +1,30 @@
+WITH params AS (
+  SELECT
+    '2026-08-27 18:53:00+05'::timestamptz AS d_start,
+    '2026-08-27 18:54:00+05'::timestamptz AS d_end
+),
+base AS (
+  SELECT b.*
+  FROM subject_category_item b, params p
+  WHERE b.created < p.d_end
+),
+new_ps AS (
+  SELECT b.subject_id, array_agg(DISTINCT b.category) AS new_cats
+  FROM base b, params p
+  WHERE b.created >= p.d_start
+  GROUP BY b.subject_id
+)
+SELECT
+  b.subject_id,
+  b.category AS old_category,
+  b.created AS old_created,
+  b.deleted AS old_deleted,
+  n.new_cats AS all_new_categories_in_period
+FROM base b
+CROSS JOIN params p
+JOIN new_ps n USING (subject_id)
+WHERE b.subject_type = 'PERSON'
+  AND b.category = 'GREY'
+  AND b.deleted >= p.d_start
+  AND b.deleted < p.d_end
+  AND cardinality(array_remove(n.new_cats, b.category)) > 0;
