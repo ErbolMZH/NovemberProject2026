@@ -1,0 +1,304 @@
+package models
+
+type CategoryReportRequest struct {
+	StartDate string `query:"start_date" json:"start_date"` // Формат: "2026-08-27 18:53:00+05" или ISO 8601
+	EndDate   string `query:"end_date" json:"end_date"`
+}
+
+type CategoryReportRow struct {
+	ID         int    `db:"id" json:"id"` // первый безымянный integer столбец на скрине
+	Category   string `db:"category" json:"category"`
+	FlStart    int64  `db:"fl_start" json:"fl_start"`
+	FlArrived  int64  `db:"fl_arrived" json:"fl_arrived"`
+	FlChanged  int64  `db:"fl_changed" json:"fl_changed"`
+	FlRemoved  int64  `db:"fl_removed" json:"fl_removed"`
+	FlEnd      int64  `db:"fl_end" json:"fl_end"`
+	FlNow      int64  `db:"fl_now" json:"fl_now"`
+	UlStart    int64  `db:"ul_start" json:"ul_start"`
+	UlArrived  int64  `db:"ul_arrived" json:"ul_arrived"`
+	UlChanged  int64  `db:"ul_changed" json:"ul_changed"`
+	UlRemoved  int64  `db:"ul_removed" json:"ul_removed"`
+	UlEnd      int64  `db:"ul_end" json:"ul_end"`
+	UlNow      int64  `db:"ul_now" json:"ul_now"`
+}
+
+
+package repository
+
+import (
+	"context"
+	"your_project/models"
+	"github.com/jmoiron/sqlx"
+)
+
+type ReportRepository struct {
+	db *sqlx.DB
+}
+
+func NewReportRepository(db *sqlx.DB) *ReportRepository {
+	return &ReportRepository{db: db}
+}
+
+func (r *ReportRepository) GetCategoriesReport(ctx context.Context, startDate, endDate string) ([]models.CategoryReportRow, error) {
+	// Вызываем вашу функцию из PostgreSQL. 
+	// Проверьте имя первого столбца в определении функции (вместо "id" может быть "ord" или "num")
+	query := `
+		SELECT 
+			*
+		FROM report_categories($1::timestamptz, $2::timestamptz)
+	`
+	
+	rows, err := r.db.QueryxContext(ctx, query, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []models.CategoryReportRow
+	for rows.Next() {
+		var row models.CategoryReportRow
+		// Если первый столбец в функции не имеет алиаса "id", используйте rows.Scan напрямую:
+		err := rows.Scan(
+			&row.ID,
+			&row.Category,
+			&row.FlStart, &row.FlArrived, &row.FlChanged, &row.FlRemoved, &row.FlEnd, &row.FlNow,
+			&row.UlStart, &row.UlArrived, &row.UlChanged, &row.UlRemoved, &row.UlEnd, &row.UlNow,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+
+	return result, rows.Err()
+}
+
+package handler
+
+import (
+	"net/http"
+	"time"
+	"your_project/repository"
+	"github.com/labstack/echo/v4"
+)
+
+type ReportHandler struct {
+	repo *repository.ReportRepository
+}
+
+func NewReportHandler(repo *repository.ReportRepository) *ReportHandler {
+	return &ReportHandler{repo: repo}
+}
+
+func (h *ReportHandler) GetCategoriesReport(c echo.Context) error {
+	startDate := c.QueryParam("start_date")
+	endDate := c.QueryParam("end_date")
+
+	if startDate == "" || endDate == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Параметры start_date и end_date обязательны",
+		})
+	}
+
+	// Валидация формата времени (поддержка ISO-строк с фронтенда)
+	if _, err := time.Parse(time.RFC3339, startDate); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Неверный формат start_date (ожидается RFC3339)",
+		})
+	}
+	if _, err := time.Parse(time.RFC3339, endDate); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Неверный формат end_date (ожидается RFC3339)",
+		})
+	}
+
+	data, err := h.repo.GetCategoriesReport(c.Request().Context(), startDate, endDate)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Ошибка при формировании отчета: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, data)
+}
+
+const CategoriesReportView = {
+    mixins: [sortMixin1],
+    template: `
+    <div class="container mattblock">
+        <div class="container-wrapper2">
+            <!-- Контент -->
+            <div class="container-content3" style="margin-top:5px;">
+
+                <div class="search-panel mb15 search-row">
+                    <label class="mr10">Начало периода:</label>
+                    <input
+                        type="datetime-local"
+                        step="1"
+                        v-model="startDate"
+                        class="inp mr10"
+                    />
+
+                    <label class="mr10">Конец периода:</label>
+                    <input
+                        type="datetime-local"
+                        step="1"
+                        v-model="endDate"
+                        class="inp mr10"
+                    />
+
+                    <button class="bpb mr10" @click="fetchReport" :disabled="isLoading">
+                        Сформировать
+                    </button>
+                    <button class="bpb dbs" @click="resetFilters" title="Сбросить период">
+                        <i class="icon-sync"></i>
+                    </button>
+                </div>
+
+                <template v-if="isLoading">
+                    <div class="loader"></div>
+                </template>
+
+                <template v-else>
+                    <template v-if="reports.length">
+                        <div style="overflow-x: auto;">
+                            <table class="tbl w100 zebra">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="2" @click="sortTable('id')">№<span>{{ sortIndicator('id') }}</span></th>
+                                        <th rowspan="2" @click="sortTable('category')">Категория<span>{{ sortIndicator('category') }}</span></th>
+                                        <th colspan="6">Физические лица (ФЛ)</th>
+                                        <th colspan="6">Юридические лица (ЮЛ)</th>
+                                    </tr>
+                                    <tr>
+                                        <!-- ФЛ -->
+                                        <th @click="sortTable('fl_start')">На начало<span>{{ sortIndicator('fl_start') }}</span></th>
+                                        <th @click="sortTable('fl_arrived')">Прибыло<span>{{ sortIndicator('fl_arrived') }}</span></th>
+                                        <th @click="sortTable('fl_changed')">Изменено<span>{{ sortIndicator('fl_changed') }}</span></th>
+                                        <th @click="sortTable('fl_removed')">Убыло<span>{{ sortIndicator('fl_removed') }}</span></th>
+                                        <th @click="sortTable('fl_end')">На конец<span>{{ sortIndicator('fl_end') }}</span></th>
+                                        <th @click="sortTable('fl_now')">Сейчас<span>{{ sortIndicator('fl_now') }}</span></th>
+                                        <!-- ЮЛ -->
+                                        <th @click="sortTable('ul_start')">На начало<span>{{ sortIndicator('ul_start') }}</span></th>
+                                        <th @click="sortTable('ul_arrived')">Прибыло<span>{{ sortIndicator('ul_arrived') }}</span></th>
+                                        <th @click="sortTable('ul_changed')">Изменено<span>{{ sortIndicator('ul_changed') }}</span></th>
+                                        <th @click="sortTable('ul_removed')">Убыло<span>{{ sortIndicator('ul_removed') }}</span></th>
+                                        <th @click="sortTable('ul_end')">На конец<span>{{ sortIndicator('ul_end') }}</span></th>
+                                        <th @click="sortTable('ul_now')">Сейчас<span>{{ sortIndicator('ul_now') }}</span></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="rep in sortedArray(reports)" :key="rep.id || rep.category">
+                                        <td>{{ rep.id ?? '-' }}</td>
+                                        <td class="n1">{{ rep.category || '-' }}</td>
+                                        <!-- ФЛ -->
+                                        <td>{{ rep.fl_start ?? 0 }}</td>
+                                        <td>{{ rep.fl_arrived ?? 0 }}</td>
+                                        <td>{{ rep.fl_changed ?? 0 }}</td>
+                                        <td>{{ rep.fl_removed ?? 0 }}</td>
+                                        <td>{{ rep.fl_end ?? 0 }}</td>
+                                        <td>{{ rep.fl_now ?? 0 }}</td>
+                                        <!-- ЮЛ -->
+                                        <td>{{ rep.ul_start ?? 0 }}</td>
+                                        <td>{{ rep.ul_arrived ?? 0 }}</td>
+                                        <td>{{ rep.ul_changed ?? 0 }}</td>
+                                        <td>{{ rep.ul_removed ?? 0 }}</td>
+                                        <td>{{ rep.ul_end ?? 0 }}</td>
+                                        <td>{{ rep.ul_now ?? 0 }}</td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td colspan="2"><strong>Итого</strong></td>
+                                        <td><strong>{{ totals.fl_start }}</strong></td>
+                                        <td><strong>{{ totals.fl_arrived }}</strong></td>
+                                        <td><strong>{{ totals.fl_changed }}</strong></td>
+                                        <td><strong>{{ totals.fl_removed }}</strong></td>
+                                        <td><strong>{{ totals.fl_end }}</strong></td>
+                                        <td><strong>{{ totals.fl_now }}</strong></td>
+                                        <td><strong>{{ totals.ul_start }}</strong></td>
+                                        <td><strong>{{ totals.ul_arrived }}</strong></td>
+                                        <td><strong>{{ totals.ul_changed }}</strong></td>
+                                        <td><strong>{{ totals.ul_removed }}</strong></td>
+                                        <td><strong>{{ totals.ul_end }}</strong></td>
+                                        <td><strong>{{ totals.ul_now }}</strong></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </template>
+                </template>
+
+            </div>
+        </div>
+    </div>
+    `,
+
+    data() {
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+        return {
+            reports: [],
+            isLoading: false,
+            startDate: this.formatDatetimeLocal(startOfDay),
+            endDate: this.formatDatetimeLocal(now)
+        };
+    },
+
+    computed: {
+        totals() {
+            const fields = [
+                'fl_start', 'fl_arrived', 'fl_changed', 'fl_removed', 'fl_end', 'fl_now',
+                'ul_start', 'ul_arrived', 'ul_changed', 'ul_removed', 'ul_end', 'ul_now'
+            ];
+            const sum = {};
+            fields.forEach((field) => {
+                sum[field] = this.reports.reduce((acc, item) => acc + (Number(item[field]) || 0), 0);
+            });
+            return sum;
+        }
+    },
+
+    mounted() {
+        this.fetchReport();
+    },
+
+    methods: {
+        formatDatetimeLocal(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        },
+        toPgTimestamp(localStr) {
+            if (!localStr) return '';
+            // Преобразуем "2026-08-27T18:53:00" в "2026-08-27 18:53:00+05:00"
+            const normalized = localStr.length === 16 ? `${localStr}:00` : localStr;
+            return `${normalized.replace('T', ' ')}+05:00`;
+        },
+        async fetchReport() {
+            this.isLoading = true;
+
+            try {
+                const resp = await axios.get('/reports/categories', { // подставьте ваш путь ручки Echo
+                    params: {
+                        start_date: this.toPgTimestamp(this.startDate),
+                        end_date: this.toPgTimestamp(this.endDate)
+                    }
+                });
+                this.reports = resp.data.data || resp.data || [];
+            } catch (error) {
+                console.error("Ошибка при загрузке отчёта:", error);
+                alert("Ошибка загрузки отчёта");
+            } finally {
+                this.isLoading = false;
+            }
+        },
+        resetFilters() {
+            const now = new Date();
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+            this.startDate = this.formatDatetimeLocal(startOfDay);
+            this.endDate = this.formatDatetimeLocal(now);
+            this.fetchReport();
+        }
+    }
+};
