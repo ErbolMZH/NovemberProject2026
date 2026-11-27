@@ -1,0 +1,94 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/labstack/echo/v4"
+)
+
+type CategoryReportRequest struct {
+	StartDate string `query:"start_date" json:"start_date"`
+	EndDate   string `query:"end_date" json:"end_date"`
+}
+
+type CategoryReportRow struct {
+	ID        int    `db:"id" json:"id"`
+	Category  string `db:"category" json:"category"`
+	FlStart   int64  `db:"fl_start" json:"fl_start"`
+	FlArrived int64  `db:"fl_arrived" json:"fl_arrived"`
+	FlChanged int64  `db:"fl_changed" json:"fl_changed"`
+	FlRemoved int64  `db:"fl_removed" json:"fl_removed"`
+	FlEnd     int64  `db:"fl_end" json:"fl_end"`
+	FlNow     int64  `db:"fl_now" json:"fl_now"`
+	UlStart   int64  `db:"ul_start" json:"ul_start"`
+	UlArrived int64  `db:"ul_arrived" json:"ul_arrived"`
+	UlChanged int64  `db:"ul_changed" json:"ul_changed"`
+	UlRemoved int64  `db:"ul_removed" json:"ul_removed"`
+	UlEnd     int64  `db:"ul_end" json:"ul_end"`
+	UlNow     int64  `db:"ul_now" json:"ul_now"`
+}
+
+func getCategoriesReportData(ctx context.Context, db *sqlx.DB, startDate, endDate string) ([]CategoryReportRow, error) {
+	query := `
+		SELECT *
+		FROM report_categories($1::timestamptz, $2::timestamptz)
+	`
+
+	rows, err := db.QueryxContext(ctx, query, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []CategoryReportRow
+	for rows.Next() {
+		var row CategoryReportRow
+		err := rows.Scan(
+			&row.ID,
+			&row.Category,
+			&row.FlStart, &row.FlArrived, &row.FlChanged, &row.FlRemoved, &row.FlEnd, &row.FlNow,
+			&row.UlStart, &row.UlArrived, &row.UlChanged, &row.UlRemoved, &row.UlEnd, &row.UlNow,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+
+	return result, rows.Err()
+}
+
+func GetCategoriesReport(c echo.Context) error {
+	startDate := c.QueryParam("start_date")
+	endDate := c.QueryParam("end_date")
+
+	if startDate == "" || endDate == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Параметры start_date и end_date обязательны",
+		})
+	}
+
+	if _, err := time.Parse(time.RFC3339, startDate); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Неверный формат start_date (ожидается RFC3339)",
+		})
+	}
+	if _, err := time.Parse(time.RFC3339, endDate); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Неверный формат end_date (ожидается RFC3339)",
+		})
+	}
+
+	// Замени DB на имя твоей переменной *sqlx.DB в пакете api
+	data, err := getCategoriesReportData(c.Request().Context(), DB, startDate, endDate)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Ошибка при формировании отчета: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, data)
+}
