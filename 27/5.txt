@@ -1,0 +1,127 @@
+const ReportCategoriesView = {
+    template: `
+    <div class="container mattblock">
+        <div class="container-wrapper2">
+            <div class="container-content3" style="margin-top:5px;">
+                <div class="search-panel mb15 search-row">
+                    <input
+                        type="datetime-local"
+                        step="1"
+                        v-model="startDateInput"
+                        class="inp mr10 inp-fixed"
+                    />
+                    <input
+                        type="datetime-local"
+                        step="1"
+                        v-model="endDateInput"
+                        class="inp mr10 inp-fixed"
+                    />
+
+                    <button class="bpb mr10" @click="fetchReport">Сформировать</button>
+                    <button class="bpb dbs" @click="resetDates" title="Сбросить"><i class="icon-sync"></i></button>
+                </div>
+
+                <template v-if="isLoading">
+                    <div class="loader"></div>
+                </template>
+
+                <template v-else>
+                    <template v-if="reports.length">
+                        <div class="table-responsive">
+                            <table class="tbl w100 zebra">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Категория</th>
+                                        <th>ФЛ начало</th>
+                                        <th>ФЛ прибыло</th>
+                                        <th>ФЛ изменено</th>
+                                        <th>ФЛ снято</th>
+                                        <th>ФЛ конец</th>
+                                        <th>ФЛ сейчас</th>
+                                        <th>ЮЛ начало</th>
+                                        <th>ЮЛ прибыло</th>
+                                        <th>ЮЛ изменено</th>
+                                        <th>ЮЛ снято</th>
+                                        <th>ЮЛ конец</th>
+                                        <th>ЮЛ сейчас</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="rep in reports" :key="rep.id ?? rep.category">
+                                        <td>{{ rep.id ?? '-' }}</td>
+                                        <td class="n1">{{ rep.category ?? '-' }}</td>
+                                        <td>{{ rep.fl_start ?? '-' }}</td>
+                                        <td>{{ rep.fl_arrived ?? '-' }}</td>
+                                        <td>{{ rep.fl_changed ?? '-' }}</td>
+                                        <td>{{ rep.fl_removed ?? '-' }}</td>
+                                        <td>{{ rep.fl_end ?? '-' }}</td>
+                                        <td>{{ rep.fl_now ?? '-' }}</td>
+                                        <td>{{ rep.ul_start ?? '-' }}</td>
+                                        <td>{{ rep.ul_arrived ?? '-' }}</td>
+                                        <td>{{ rep.ul_changed ?? '-' }}</td>
+                                        <td>{{ rep.ul_removed ?? '-' }}</td>
+                                        <td>{{ rep.ul_end ?? '-' }}</td>
+                                        <td>{{ rep.ul_now ?? '-' }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+                    <template v-else>
+                        <div class="empty-state">Нет данных за выбранный период</div>
+                    </template>
+                </template>
+            </div>
+        </div>
+    </div>
+    `,
+
+    data() {
+        return {
+            reports: [],
+            isLoading: false,
+            startDateInput: this.formatInputDate(new Date(Date.now() - 24 * 60 * 60 * 1000)),
+            endDateInput: this.formatInputDate(new Date()),
+            tzOffset: '+05:00'
+        };
+    },
+
+    mounted() {
+        this.fetchReport();
+    },
+
+    methods: {
+        formatInputDate(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        },
+        toRFC3339(localDateStr) {
+            if (!localDateStr) return '';
+            const normalized = localDateStr.length === 16 ? `${localDateStr}:00` : localDateStr;
+            return `${normalized}${this.tzOffset}`;
+        },
+        async fetchReport() {
+            this.isLoading = true;
+            try {
+                const resp = await axios.get('/report/categories', {
+                    params: {
+                        start_date: this.toRFC3339(this.startDateInput),
+                        end_date: this.toRFC3339(this.endDateInput)
+                    }
+                });
+                this.reports = resp.data.data || [];
+            } catch (error) {
+                console.error("Ошибка при загрузке отчёта:", error);
+                alert("Ошибка загрузки отчёта");
+            } finally {
+                this.isLoading = false;
+            }
+        },
+        resetDates() {
+            this.startDateInput = this.formatInputDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+            this.endDateInput = this.formatInputDate(new Date());
+            this.fetchReport();
+        }
+    }
+};
