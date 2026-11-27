@@ -1,0 +1,66 @@
+package api
+
+import (
+	pg "af_back/db"
+	"fmt"
+	"log"
+
+	"github.com/labstack/echo/v4"
+)
+
+type CategoryReportRow struct {
+	ID        int    `db:"id" json:"id"`
+	Category  string `db:"category" json:"category"`
+	FlStart   int64  `db:"fl_start" json:"fl_start"`
+	FlArrived int64  `db:"fl_arrived" json:"fl_arrived"`
+	FlChanged int64  `db:"fl_changed" json:"fl_changed"`
+	FlRemoved int64  `db:"fl_removed" json:"fl_removed"`
+	FlEnd     int64  `db:"fl_end" json:"fl_end"`
+	FlNow     int64  `db:"fl_now" json:"fl_now"`
+	UlStart   int64  `db:"ul_start" json:"ul_start"`
+	UlArrived int64  `db:"ul_arrived" json:"ul_arrived"`
+	UlChanged int64  `db:"ul_changed" json:"ul_changed"`
+	UlRemoved int64  `db:"ul_removed" json:"ul_removed"`
+	UlEnd     int64  `db:"ul_end" json:"ul_end"`
+	UlNow     int64  `db:"ul_now" json:"ul_now"`
+}
+
+func GetCategoriesReportData(DateFrom, DateTo string) ([]CategoryReportRow, error) {
+	query := `
+		SELECT *
+		FROM report_categories($1::timestamptz, $2::timestamptz)
+	`
+
+	var result []CategoryReportRow
+	err := pg.DB().Select(&result, query, DateFrom, DateTo)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("dateFROM:", DateFrom)
+	fmt.Println("dateTo:", DateTo)
+	return result, nil
+}
+
+func GetCategoriesReport(c echo.Context) error {
+	start := c.QueryParam("start_date")
+	end := c.QueryParam("end_date")
+
+	fmt.Println("dateFROM:", start)
+	fmt.Println("dateTo:", end)
+
+	data, err := GetCategoriesReportData(start, end)
+	if err != nil {
+		return c.JSON(500, map[string]interface{}{
+			"status": false,
+			"error":  err.Error(),
+		})
+	}
+
+	log.Println(data)
+
+	return c.JSON(200, map[string]interface{}{
+		"status": true,
+		"data":   data,
+	})
+}
